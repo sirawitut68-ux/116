@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 นักผจญภัยอัลกอริทึม AR - สื่อการเรียนรู้วิทยาการคำนวณ ป.5</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700;800&family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        * {
+            font-family: 'Prompt', 'Sarabun', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Ambient glow animation */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.6); }
+            50% { box-shadow: 0 0 30px rgba(168, 85, 247, 0.9); }
+        }
+
+        .glow-card {
+            animation: pulse-glow 3s infinite;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #6366f1;
+            border-radius: 4px;
+        }
+
+        /* Dwell Click Circle animation */
+        .dwell-ring {
+            transition: stroke-dashoffset 0.1s linear;
+        }
+
+        /* Glassmorphism background */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        /* Card active and hover effects */
+        .ar-btn {
+            transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .ar-btn:hover, .ar-btn.hovered {
+            transform: scale(1.05) translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.5);
+        }
+        .ar-btn:active, .ar-btn.active {
+            transform: scale(0.98);
+        }
+
+        /* Maze Grid styles */
+        .maze-cell {
+            transition: background-color 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white min-h-screen overflow-x-hidden relative">
+
+    <!-- Hidden webcam video source -->
+    <video id="webcam" class="hidden" playsinline></video>
+
+    <!-- Fullscreen Render Canvas for Camera + Hands + AR Overlays -->
+    <div class="fixed inset-0 w-full h-full z-0 overflow-hidden">
+        <canvas id="arCanvas" class="w-full h-full object-cover transform -scale-x-100"></canvas>
+    </div>
+
+    <!-- Virtual Hand Pointer Cursor Overlay -->
+    <div id="virtualCursor" class="fixed top-0 left-0 pointer-events-none z-50 transform -translate-x-1/2 -translate-y-1/2 transition-opacity duration-200 opacity-0">
+        <div class="relative w-12 h-12 flex items-center justify-center">
+            <!-- Outer dwell ring -->
+            <svg class="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                <path class="text-slate-700" stroke-width="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path id="dwellProgress" class="text-amber-400 dwell-ring" stroke-linecap="round" stroke-width="3" stroke-dasharray="100, 100" stroke-dashoffset="100" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            </svg>
+            <!-- Core Cursor Point -->
+            <div class="absolute w-5 h-5 bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full shadow-lg border-2 border-white animate-pulse"></div>
+            <!-- Hand Icon badge -->
+            <div id="handSideBadge" class="absolute -bottom-2 -right-2 text-[10px] bg-indigo-600 text-white font-bold px-1.5 py-0.5 rounded-full shadow">
+                👉
+            </div>
+        </div>
+    </div>
+
+    <div id="appContainer" class="relative z-10 min-h-screen flex flex-col justify-between p-4 md:p-6">
+
+        <!-- TOP HUD BAR (Score, Level, Progress, Controls) -->
+        <header id="topHud" class="glass-panel rounded-2xl p-4 mb-4 flex flex-wrap items-center justify-between gap-4 shadow-2xl transition-all duration-300 hidden">
+            <!-- Title & Level Badge -->
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-2xl shadow-lg border border-indigo-300">
+                    🤖
+                </div>
+                <div>
+                    <h1 class="text-lg md:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 via-purple-200 to-pink-300">
+                        นักผจญภัยอัลกอริทึม AR
+                    </h1>
+                    <div id="currentLevelTitle" class="text-xs md:text-sm text-indigo-300 font-medium">
+                        ด่านที่ 1: เรียงขั้นตอนให้ถูกต้อง
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Bar & Score Center -->
+            <div class="flex-1 max-w-xs md:max-w-md mx-auto">
+                <div class="flex justify-between items-center text-xs text-slate-300 mb-1 font-semibold">
+                    <span>ความคืบหน้าภารกิจ</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="w-full h-3.5 bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/50 p-0.5">
+                    <div id="progressBar" class="h-full bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 rounded-full transition-all duration-500 w-0 shadow-sm"></div>
+                </div>
+            </div>
+
+            <!-- Score Badge & Controls -->
+            <div class="flex items-center gap-3">
+                <div class="glass-panel bg-amber-500/10 border-amber-500/30 px-4 py-1.5 rounded-xl flex items-center gap-2">
+                    <span class="text-2xl animate-bounce">⭐</span>
+                    <div>
+                        <div class="text-[10px] text-amber-300 font-semibold tracking-wider uppercase">คะแนนสะสม</div>
+                        <div id="scoreDisplay" class="text-xl md:text-2xl font-extrabold text-amber-400">0</div>
+                    </div>
+                </div>
+
+                <button id="btnToggleSound" onclick="toggleAudio()" class="ar-btn glass-panel p-2.5 rounded-xl hover:bg-slate-700/50 text-indigo-200 border-indigo-500/30" title="เปิด/ปิดเสียง">
+                    🔊
+                </button>
+                <button id="btnToggleMode" onclick="toggleControlMode()" class="ar-btn glass-panel px-3 py-2 rounded-xl hover:bg-slate-700/50 text-xs font-semibold text-cyan-300 border-cyan-500/30 flex items-center gap-1.5" title="สลับโหมดควบคุม">
+                    <span id="controlModeIcon">🖐️</span>
+                    <span id="controlModeText" class="hidden md:inline">โหมดกล้อง AR</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- No Hand Detected Floating Alert Banner -->
+        <div id="handWarningBanner" class="glass-panel bg-amber-500/20 border-amber-500/50 text-amber-200 px-4 py-2.5 rounded-xl max-w-md mx-auto mb-4 flex items-center gap-3 text-sm shadow-xl transition-all duration-300 hidden">
+            <span class="text-xl animate-pulse">🖐️</span>
+            <span class="font-medium">ไม่พบมือหน้ากล้อง: กรุณายกมือขึ้นมาให้อยู่ในกรอบ หรือใช้เมาส์/สัมผัสหน้าจอแทนได้ครับ</span>
+        </div>
+
+        <main class="flex-1 flex items-center justify-center my-auto">
+
+            <!-- 1. START MENU SCREEN -->
+            <section id="screenStart" class="w-full max-w-2xl text-center">
+                <div class="glass-panel p-6 md:p-10 rounded-3xl border border-indigo-500/30 shadow-2xl relative overflow-hidden glow-card">
+                    <div class="absolute -top-10 -right-10 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
+                    <div class="absolute -bottom-10 -left-10 w-40 h-40 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+                    <!-- Mascot Graphic -->
+                    <div class="w-28 h-28 mx-auto mb-4 bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 rounded-3xl p-1 shadow-xl transform rotate-3 hover:rotate-0 transition-transform duration-300">
+                        <div class="w-full h-full bg-slate-900 rounded-[22px] flex items-center justify-center text-6xl">
+                            🤖
+                        </div>
+                    </div>
+
+                    <span class="inline-block px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 rounded-full text-xs font-semibold mb-3">
+                        วิทยาการคำนวณ ระดับชั้นประถมศึกษาปีที่ 5
+                    </span>
+
+                    <h1 class="text-3xl md:text-5xl font-black mb-3 bg-clip-text text-transparent bg-gradient-to-r from-yellow-300 via-indigo-200 to-pink-300 drop-shadow-md">
+                        🎮 นักผจญภัยอัลกอริทึม AR
+                    </h1>
+                    
+                    <p class="text-slate-300 text-sm md:text-base max-w-lg mx-auto mb-8 font-light leading-relaxed">
+                        ออกผจญภัยในโลก AR ใช้มือควบคุมการแก้ปัญหา เรียนรู้ <span class="text-cyan-300 font-semibold">ขั้นตอนอัลกอริทึม</span> และพิชิตภารกิจวิทยาการคำนวณ!
+                    </p>
+
+                    <!-- Buttons Row -->
+                    <div class="flex flex-col sm:flex-row gap-4 justify-center items-center">
+                        <button id="btnStartGame" onclick="startGameAdventure()" class="ar-btn w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-lg rounded-2xl shadow-xl border border-emerald-300/40 flex items-center justify-center gap-2">
+                            <span>🚀 เริ่มการผจญภัย</span>
+                        </button>
+                        
+                        <button id="btnHowToPlay" onclick="openHowToPlayModal()" class="ar-btn w-full sm:w-auto px-6 py-4 glass-panel hover:bg-slate-800 text-indigo-200 font-semibold text-base rounded-2xl border border-indigo-400/30 flex items-center justify-center gap-2">
+                            <span>📖 วิธีเล่น & วัตถุประสงค์</span>
+                        </button>
+                    </div>
+
+                    <!-- AR System status indicator -->
+                    <div class="mt-8 pt-4 border-t border-slate-700/50 flex items-center justify-center gap-2 text-xs text-slate-400">
+                        <span id="camStatusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+                        <span id="camStatusText">กำลังเตรียมพร้อมระบบกล้องและตรวจจับมือ AR...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- HOW TO PLAY MODAL -->
+            <div id="modalHowToPlay" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 hidden">
+                <div class="glass-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 md:p-8 rounded-3xl border border-indigo-500/40 shadow-2xl relative">
+                    <button onclick="closeHowToPlayModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-2xl font-bold w-10 h-10 rounded-full glass-panel flex items-center justify-center">
+                        ✕
+                    </button>
+
+                    <h2 class="text-2xl font-bold text-yellow-400 mb-4 flex items-center gap-2">
+                        <span>📖</span> วิธีเล่นเกม & เป้าหมายการเรียนรู้
+                    </h2>
+
+                    <!-- Learning Objectives -->
+                    <div class="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-4 mb-6">
+                        <h3 class="text-sm font-bold text-indigo-300 mb-2">🎯 เป้าหมายการเรียนรู้ (ป.5):</h3>
+                        <ul class="text-xs md:text-sm text-slate-200 space-y-1.5 list-disc list-inside">
+                            <li>เข้าใจความหมายของอัลกอริทึมและการแก้ปัญหาอย่างเป็นขั้นตอน</li>
+                            <li>สามารถเรียงลำดับขั้นตอนการทำงานในชีวิตประจำวันได้อย่างถูกต้อง</li>
+                            <li>วิเคราะห์และเลือกวิธีการแก้ปัญหาในสถานการณ์จริงได้</li>
+                            <li>ฝึกทักษะการคิดเชิงคำนวณ (Computational Thinking)</li>
+                        </ul>
+                    </div>
+
+                    <!-- AR Control Guide -->
+                    <div class="space-y-4 mb-6 text-sm text-slate-200">
+                        <h3 class="font-bold text-cyan-300 text-base">🖐️ วิธีการใช้มือควบคุมในโลก AR:</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-700 flex items-start gap-3">
+                                <div class="text-3xl">👉</div>
+                                <div>
+                                    <div class="font-bold text-amber-300">1. เลื่อนนิ้วชี้</div>
+                                    <div class="text-xs text-slate-300">ชี้ตัวชี้ (Cursor) ไปยังการ์ดหรือปุ่มคำตอบบนหน้าจอ</div>
+                                </div>
+                            </div>
+                            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-700 flex items-start gap-3">
+                                <div class="text-3xl">⏱️</div>
+                                <div>
+                                    <div class="font-bold text-amber-300">2. ชี้ค้างไว้ 1 วินาที</div>
+                                    <div class="text-xs text-slate-300">วงกลมจะหมุนเต็มเพื่อเลือกคำตอบ หรือใช้นิ้วโป้งแตะนิ้วชี้ (Pinch)</div>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-400 italic bg-slate-900/40 p-2.5 rounded-lg border border-slate-800">
+                            💡 หมายเหตุ: หากกล้องไม่ทำงาน หรือเล่นบนอุปกรณ์ที่ไม่มีกล้อง สามารถคลิกเลือกและลากการ์ดด้วยเมาส์หรือนิ้วมือบนหน้าจอสัมผัสได้ทันที!
+                        </p>
+                    </div>
+
+                    <button onclick="closeHowToPlayModal()" class="ar-btn w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg">
+                        เข้าใจแล้ว พร้อมลุย!
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2. GAMEPLAY ACTIVE LEVEL CONTAINER -->
+            <section id="screenGameplay" class="w-full max-w-4xl mx-auto hidden">
+                <div id="levelContent" class="glass-panel p-4 md:p-8 rounded-3xl border border-indigo-500/30 shadow-2xl min-h-[480px] flex flex-col justify-between relative">
+                    <!-- Dynamic level content injected here via JS -->
+                </div>
+            </section>
+
+            <!-- 3. FINAL SUMMARY / GAME OVER SCREEN -->
+            <section id="screenSummary" class="w-full max-w-2xl text-center hidden">
+                <div class="glass-panel p-6 md:p-10 rounded-3xl border border-emerald-500/40 shadow-2xl relative glow-card">
+                    <div class="text-6xl mb-3 animate-bounce">🎉</div>
+                    <h2 class="text-3xl md:text-4xl font-black text-amber-300 mb-2">
+                        ภารกิจสำเร็จ!
+                    </h2>
+                    <p class="text-emerald-200 text-sm md:text-base font-medium mb-6">
+                        คุณคือสุดยอด "นักผจญภัยอัลกอริทึม" ประจำชั้น ป.5!
+                    </p>
+
+                    <!-- Stats Card -->
+                    <div class="grid grid-cols-3 gap-3 bg-slate-900/80 p-4 rounded-2xl border border-slate-700/80 mb-6">
+                        <div class="p-2">
+                            <div class="text-xs text-slate-400 font-medium">คะแนนรวม</div>
+                            <div id="finalScore" class="text-2xl md:text-3xl font-extrabold text-amber-400">0</div>
+                        </div>
+                        <div class="p-2 border-x border-slate-800">
+                            <div class="text-xs text-slate-400 font-medium">ตอบถูกต้อง</div>
+                            <div id="finalCorrect" class="text-2xl md:text-3xl font-extrabold text-emerald-400">0</div>
+                        </div>
+                        <div class="p-2">
+                            <div class="text-xs text-slate-400 font-medium">ด่านที่ผ่าน</div>
+                            <div id="finalLevels" class="text-2xl md:text-3xl font-extrabold text-cyan-400">4/4</div>
+                        </div>
+                    </div>
+
+                    <!-- Competency Assessment Badge -->
+                    <div id="achievementBadge" class="bg-gradient-to-r from-indigo-900/60 to-purple-900/60 p-4 rounded-2xl border border-indigo-500/40 mb-8 text-left">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="text-3xl">🏅</span>
+                            <div>
+                                <div class="text-xs text-indigo-300 font-semibold">ระดับสมรรถนะวิทยาการคำนวณ</div>
+                                <div id="badgeTitle" class="text-lg font-bold text-yellow-300">ปรมาจารย์อัลกอริทึมแห่งอนาคต</div>
+                            </div>
+                        </div>
+                        <p id="badgeDesc" class="text-xs md:text-sm text-slate-300 leading-relaxed">
+                            นักเรียนมีความเข้าใจในการคิดแก้ปัญหาอย่างเป็นระบบ สามารถวางลำดับขั้นตอนอัลกอริทึมได้อย่างถูกต้องแม่นยำ!
+                        </p>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                        <button onclick="startGameAdventure()" class="ar-btn px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg border border-emerald-300/30">
+                            🔄 เล่นอีกครั้ง
+                        </button>
+                        <button onclick="returnToMainMenu()" class="ar-btn px-6 py-3.5 glass-panel hover:bg-slate-800 text-indigo-200 font-semibold rounded-xl border border-indigo-500/30">
+                            🏠 กลับหน้าหลัก
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Educational Hint / Feedback Overlay Modal -->
+        <div id="hintModal" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-40 w-full max-w-lg px-4 transition-all duration-300 translate-y-32 opacity-0 pointer-events-none">
+            <div id="hintCard" class="glass-panel bg-slate-900/95 p-4 rounded-2xl border shadow-2xl flex items-start gap-3">
+                <span id="hintIcon" class="text-3xl">💡</span>
+                <div class="flex-1">
+                    <div id="hintTitle" class="font-bold text-sm mb-0.5">คำใบ้อัลกอริทึม</div>
+                    <div id="hintText" class="text-xs md:text-sm text-slate-200 leading-relaxed"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="text-center text-xs text-slate-400 mt-4 py-2 font-light">
+            รายวิชาวิทยาการคำนวณ ชั้นประถมศึกษาปีที่ 5 • เรื่อง "อัลกอริทึมและการแก้ปัญหาในชีวิตประจำวัน"
+        </footer>
+    </div>
+
+    <script>
+        // ==========================================
+        // GAME STATE & GLOBAL VARIABLES
+        // ==========================================
+        let gameState = {
+            score: 0,
+            currentLevelIndex: 0, // 0: L1, 1: L2, 2: L3, 3: L4
+            questIndex: 0,
+            correctCount: 0,
+            totalQuests: 0,
+            audioEnabled: true,
+            useCamera: true,
+            handDetected: false,
+            cursorX: window.innerWidth / 2,
+            cursorY: window.innerHeight / 2,
+            hoverElement: null,
+            dwellTimer: 0,
+            dwellRequiredTime: 1000, // 1 second hover to click
+            lastFrameTime: performance.now()
+        };
+
+        // Web Audio API Synthesizer (No external sound files required)
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) audioCtx = new AudioContext();
+            }
+        }
+
+        function playSound(type) {
+            if (!gameState.audioEnabled) return;
+            try {
+                initAudio();
+                if (!audioCtx) return;
+                
+                const now = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                if (type === 'click') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(400, now);
+                    osc.frequency.exponentialRampToValueAtTime(800, now + 0.08);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+                    osc.start(now);
+                    osc.stop(now + 0.08);
+                } else if (type === 'correct') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(523.25, now); // C5
+                    osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+                    osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+                    osc.start(now);
+                    osc.stop(now + 0.35);
+                } else if (type === 'wrong') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(220, now);
+                    osc.frequency.setValueAtTime(180, now + 0.15);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                } else if (type === 'levelComplete') {
+                    // Fanfare notes
+                    const notes = [523.25, 659.25, 783.99, 1046.50];
+                    notes.forEach((freq, idx) => {
+                        const subOsc = audioCtx.createOscillator();
+                        const subGain = audioCtx.createGain();
+                        subOsc.connect(subGain);
+                        subGain.connect(audioCtx.destination);
+                        subOsc.frequency.setValueAtTime(freq, now + idx * 0.12);
+                        subGain.gain.setValueAtTime(0.2, now + idx * 0.12);
+                        subGain.gain.linearRampToValueAtTime(0.01, now + idx * 0.12 + 0.25);
+                        subOsc.start(now + idx * 0.12);
+                        subOsc.stop(now + idx * 0.12 + 0.25);
+                    });
+                }
+            } catch (e) {
+                console.log('Audio error:', e);
+            }
+        }
+
+        function toggleAudio() {
+            gameState.audioEnabled = !gameState.audioEnabled;
+            const btn = document.getElementById('btnToggleSound');
+            if (btn) btn.innerText = gameState.audioEnabled ? '🔊' : '🔇';
+        }
+
+        function toggleControlMode() {
+            gameState.useCamera = !gameState.useCamera;
+            const icon = document.getElementById('controlModeIcon');
+            const text = document.getElementById('controlModeText');
+            if (icon) icon.innerText = gameState.useCamera ? '🖐️' : '🖱️';
+            if (text) text.innerText = gameState.useCamera ? 'โหมดกล้อง AR' : 'โหมดเมาส์/สัมผัส';
+            
+            const cursor = document.getElementById('virtualCursor');
+            if (!gameState.useCamera && cursor) {
+                cursor.style.opacity = '0';
+            }
+        }
+
+        // ==========================================
+        // EDUCATIONAL GAME DATA (GRADE 5 COMPUTING)
+        // ==========================================
+        const LEVEL_DATA = [
+            // LEVEL 1: Sequential Steps Ordering
+            {
+                id: 1,
+                title: "ด่านที่ 1: เรียงขั้นตอนให้ถูกต้อง (Sequential Algorithm)",
+                type: "reorder",
+                quests: [
+                    {
+                        topic: "🪥 การลำดับขั้นตอน 'การแปรงฟันอย่างถูกวิธี'",
+                        description: "ลากหรือคลิกเรียงลำดับการ์ดขั้นตอนจากก่อนไปหลังให้ถูกต้อง:",
+                        steps: [
+                            { id: "s1", text: "1. บีบยาสีฟันลงบนแปรง", correctOrder: 1 },
+                            { id: "s2", text: "2. แปรงฟันให้ทั่วทุกซี่อย่างเบามือ", correctOrder: 2 },
+                            { id: "s3", text: "3. บ้วนปากด้วยน้ำสะอาด", correctOrder: 3 },
+                            { id: "s4", text: "4. ล้างแปรงสีฟันให้สะอาดแล้วเก็บเข้าที่", correctOrder: 4 }
+                        ],
+                        hint: "ลองคิดดูว่าสิ่งแรกที่คุณต้องทำก่อนลงมือแปรงฟันคืออะไร?"
+                    },
+                    {
+                        topic: "🍳 การลำดับขั้นตอน 'การทำไข่เจียวทรงเครื่อง'",
+                        description: "เรียงลำดับขั้นตอนการทำไข่เจียวให้เป็นอัลกอริทึมที่ถูกต้อง:",
+                        steps: [
+                            { id: "s1", text: "1. ตอกไข่ใส่ชามและใส่เครื่องปรุง", correctOrder: 1 },
+                            { id: "s2", text: "2. ใช้ส้อมตีไข่ให้เข้ากันเป็นเนื้อเดียว", correctOrder: 2 },
+                            { id: "s3", text: "3. ตั้งกระทะ เทน้ำมัน รอจนน้ำมันร้อน", correctOrder: 3 },
+                            { id: "s4", text: "4. เทไข่ลงกระทะ ทอดจนสุกตักใส่จาน", correctOrder: 4 }
+                        ],
+                        hint: "ก่อนจะเทไข่ลงกระทะ คุณต้องเตรียมไข่และตั้งกระทะก่อนใช่ไหม?"
+                    },
+                    {
+                        topic: "🎒 การลำดับขั้นตอน 'การเตรียมกระเป๋านักเรียน'",
+                        description: "เรียงลำดับการเตรียมกระเป๋าไปโรงเรียนให้เรียบร้อย:",
+                        steps: [
+                            { id: "s1", text: "1. เปิดดูตารางเรียนประจำวัน", correctOrder: 1 },
+                            { id: "s2", text: "2. หยิบหนังสือและสมุดตามตารางเรียน", correctOrder: 2 },
+                            { id: "s3", text: "3. ตรวจสอบดินสอและเครื่องเขียน", correctOrder: 3 },
+                            { id: "s4", text: "4. จัดใส่กระเป๋าแล้วปิดซิปให้เรียบร้อย", correctOrder: 4 }
+                        ],
+                        hint: "เราจะรู้ได้อย่างไรว่าต้องหยิบหนังสือเล่มไหน ถ้าไม่ดูตารางเรียนก่อน?"
+                    }
+                ]
+            },
+
+            // LEVEL 2: Problem Solving Decisions
+            {
+                id: 2,
+                title: "ด่านที่ 2: นักแก้ปัญหาอัลกอริทึม (Problem Solving)",
+                type: "problem_solving",
+                quests: [
+                    {
+                        scenario: "💻 สถานการณ์: นักเรียนทำรายงานวิชาวิทยาการคำนวณเสร็จแล้วในคอมพิวเตอร์ และต้องการส่งไฟล์งานให้คุณครูทางอีเมล ต้องทำอย่างไรเป็นขั้นตอนแรก?",
+                        options: [
+                            { text: "A. เปิดโปรแกรมรับส่งอีเมล แล้วกดแนบไฟล์งานทันที", correct: false, reason: "ยังไม่ได้ตรวจสอบความถูกต้องของไฟล์งานเลย" },
+                            { text: "B. ตรวจสอบความถูกต้องของไฟล์งาน และเซฟชื่อไฟล์ให้ชัดเจน", correct: true, reason: "ถูกต้อง! ควรตรวจทานงานให้สมบูรณ์ก่อนจัดส่งเสมอ" },
+                            { text: "C. ปิดเครื่องคอมพิวเตอร์เพื่อพักสายตา", correct: false, reason: "ถ้าปิดเครื่องก่อน งานจะยังส่งไม่ถึงครูนะ" },
+                            { text: "D. ลบไฟล์งานทิ้ง แล้วทำใหม่ตั้งแต่ต้น", correct: false, reason: "งานทำเสร็จแล้ว ไม่จำเป็นต้องลบทำใหม่ครับ" }
+                        ],
+                        hint: "อัลกอริทึมการทำงานที่ดี ต้องเริ่มจากการตรวจสอบความพร้อมของข้อมูลก่อนเสมอ"
+                    },
+                    {
+                        scenario: "🔌 สถานการณ์: เมื่อกดปุ่ม Power ที่หน้าจอคอมพิวเตอร์ในห้องเรียนแล้ว แต่หน้าจอไม่มีภาพขึ้น ควรใช้ขั้นตอนการแก้ปัญหาอย่างไร?",
+                        options: [
+                            { text: "A. ตรวจสอบว่าปลั๊กไฟและสายสัญญาณหน้าจอเสียบแน่นหรือไม่", correct: true, reason: "ถูกต้อง! การตรวจสอบจุดเชื่อมต่อพื้นฐานเป็นการแก้ปัญหาขั้นแรก" },
+                            { text: "B. ทุบเคสคอมพิวเตอร์แรงๆ 2-3 ครั้ง", correct: false, reason: "อาจทำให้ อุปกรณ์อิเล็กทรอนิกส์เสียหายได้" },
+                            { text: "C. ซื้อคอมพิวเตอร์เครื่องใหม่ทันที", correct: false, reason: "เป็นการแก้ปัญหาเกินความจำเป็น ลองเช็คสายไฟดูก่อน" },
+                            { text: "D. นั่งรอเฉยๆ โดยไม่ทำอะไรเลย", correct: false, reason: "ปัญหาจะไม่ได้รับการแก้ไขถ้าเราไม่ตรวจสอบ" }
+                        ],
+                        hint: "วิเคราะห์หาสาเหตุของปัญหาจากสิ่งพื้นฐานที่ง่ายที่สุดก่อน"
+                    }
+                ]
+            },
+
+            // LEVEL 3: Maze Algorithm Programming
+            {
+                id: 3,
+                title: "ด่านที่ 3: ภารกิจเขาวงกตอัลกอริทึม (Algorithm Maze)",
+                type: "maze",
+                quests: [
+                    {
+                        gridSize: 5,
+                        start: { r: 0, c: 0 },
+                        goal: { r: 4, c: 4 },
+                        obstacles: [{ r: 1, c: 1 }, { r: 2, c: 1 }, { r: 1, c: 3 }, { r: 3, c: 2 }, { r: 3, c: 3 }],
+                        instruction: "เลือกคำสั่งลูกศรเพื่อเขียนโปรแกรมพาน้องหุ่นยนต์ 🤖 ไปหาดาว ⭐️ โดยหลบสิ่งกีดขวาง 🪨"
+                    }
+                ]
+            },
+
+            // LEVEL 4: Real-Life Daily Interactive Scenarios
+            {
+                id: 4,
+                title: "ด่านที่ 4: ภารกิจแก้ปัญหาในชีวิตประจำวัน (Daily Life Algorithm)",
+                type: "scenarios",
+                quests: [
+                    {
+                        topic: "🔎 สถานการณ์: คุณต้องการค้นหาข้อมูลเกี่ยวกับ 'การแยกขยะ' บนอินเทอร์เน็ต เพื่อทำรายงาน",
+                        question: "เรียงลำดับอัลกอริทึมการค้นหาข้อมูลอย่างปลอดภัยและตรงประเด็น:",
+                        steps: [
+                            { id: "m1", text: "1. เปิดเว็บบราวเซอร์ (เช่น Chrome) และไปที่เว็บค้นหา", correctOrder: 1 },
+                            { id: "m2", text: "2. พิมพ์คำค้นหา (Keyword) ว่า 'การแยกขยะ ประถม'", correctOrder: 2 },
+                            { id: "m3", text: "3. เลือกอ่านข้อมูลจากเว็บไซต์ที่น่าเชื่อถือ", correctOrder: 3 },
+                            { id: "m4", text: "4. สรุปเนื้อหาและจดบันทึกอ้างอิงแหล่งที่มา", correctOrder: 4 }
+                        ],
+                        hint: "เปิดโปรแกรมค้นหาก่อน แล้วจึงระบุคำค้นหาที่กระชับตรงประเด็น"
+                    },
+                    {
+                        topic: "📚 สถานการณ์: พรุ่งนี้มีสอบวิชาวิทยาการคำนวณ แต่จำไม่ได้ว่าอ่านหนังสือถึงหน้าไหน",
+                        question: "การแก้ปัญหาอย่างมีระบบแบบใดเหมาะสมที่สุด?",
+                        options: [
+                            { text: "A. ตรวจสอบสัญลักษณ์คั่นหน้าหนังสือ หรือดูหัวข้อในตารางเรียน", correct: true, reason: "ถูกต้อง! การใช้เครื่องมือช่วยจำหรือตรวจสอบตารางช่วยให้แก้ปัญหาได้เร็ว" },
+                            { text: "B. อ่านหนังสือใหม่ทั้งหมดตั้งแต่หน้าแรกถึงหน้าสุดท้าย", correct: false, reason: "เสียเวลามาก และอาจอ่านไม่ทันการสอบ" },
+                            { text: "C. ไม่อ่านหนังสือเลย แล้วไปเดาข้อสอบในห้องเรียน", correct: false, reason: "ไม่ใช่แนวทางการแก้ปัญหาที่ดี" }
+                        ],
+                        hint: "ค้นหาหลักฐานหรือจุดสังเกตที่คุณเคยทำไว้ก่อนหน้า"
+                    }
+                ]
+            }
+        ];
+
+        // ==========================================
+        // CAMERA & MEDIAPIPE HANDS SETUP
+        // ==========================================
+        let videoElement, arCanvas, canvasCtx;
+        let handsDetector;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            videoElement = document.getElementById('webcam');
+            arCanvas = document.getElementById('arCanvas');
+            canvasCtx = arCanvas.getContext('2d');
+
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Setup Mouse/Touch Event Listeners for Fallback
+            window.addEventListener('mousemove', handlePointerMove);
+            window.addEventListener('touchmove', handleTouchMove, { passive: true });
+            window.addEventListener('click', handlePointerClick);
+
+            // Initialize MediaPipe Hands
+            initMediaPipeHands();
+        });
+
+        function resizeCanvas() {
+            if (arCanvas) {
+                arCanvas.width = window.innerWidth;
+                arCanvas.height = window.innerHeight;
+            }
+        }
+
+        function initMediaPipeHands() {
+            try {
+                handsDetector = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+
+                handsDetector.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6
+                });
+
+                handsDetector.onResults(onHandResults);
+
+                // Start Web Camera Feed
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    const camera = new Camera(videoElement, {
+                        onFrame: async () => {
+                            if (gameState.useCamera) {
+                                await handsDetector.send({ image: videoElement });
+                            }
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+
+                    camera.start().then(() => {
+                        document.getElementById('camStatusText').innerText = "ระบบกล้อง AR และตรวจจับมือ พร้อมใช้งาน!";
+                        document.getElementById('camStatusDot').className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+                    }).catch(err => {
+                        console.warn("Camera permission denied or not available:", err);
+                        document.getElementById('camStatusText').innerText = "ไม่สามารถเปิดกล้องได้ - ใช้โหมดเมาส์/สัมผัสในการเล่นเกมได้ปกติ";
+                        document.getElementById('camStatusDot').className = "w-2.5 h-2.5 rounded-full bg-amber-400";
+                        gameState.useCamera = false;
+                    });
+                }
+            } catch (err) {
+                console.error("MediaPipe initialization error:", err);
+            }
+        }
+
+        // ==========================================
+        // HAND TRACKING & AR LANDMARK RENDERING
+        // ==========================================
+        function onHandResults(results) {
+            // Clear AR Canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+
+            // Render Mirrored Video Frame onto Canvas background
+            if (results.image) {
+                canvasCtx.drawImage(results.image, 0, 0, arCanvas.width, arCanvas.height);
+            }
+
+            const warningBanner = document.getElementById('handWarningBanner');
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                gameState.handDetected = true;
+                if (warningBanner) warningBanner.classList.add('hidden');
+
+                const landmarks = results.multiHandLandmarks[0];
+                const handedness = results.multiHandedness[0] ? results.multiHandedness[0].label : 'Right';
+
+                // Draw Hand Skeleton / Landmarks with Glowing AR Effect
+                drawHandAROverlay(landmarks);
+
+                // Index Finger Tip (Landmark #8)
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+
+                // Convert normalized coordinates (0..1) to canvas pixels (Mirrored horizontally)
+                const screenX = (1 - indexTip.x) * window.innerWidth;
+                const screenY = indexTip.y * window.innerHeight;
+
+                // Update Virtual Cursor Position smoothly
+                gameState.cursorX += (screenX - gameState.cursorX) * 0.4;
+                gameState.cursorY += (screenY - gameState.cursorY) * 0.4;
+
+                updateVirtualCursor(handedness);
+
+                // Pinch gesture detection (Distance between Thumb Tip #4 and Index Tip #8)
+                const distancePinch = Math.hypot(
+                    (thumbTip.x - indexTip.x) * window.innerWidth,
+                    (thumbTip.y - indexTip.y) * window.innerHeight
+                );
+
+                if (distancePinch < 45) { // Pinch trigger
+                    triggerCursorClick();
+                } else {
+                    processDwellHover();
+                }
+
+            } else {
+                gameState.handDetected = false;
+                if (gameState.useCamera && warningBanner && gameState.currentLevelIndex >= 0) {
+                    warningBanner.classList.remove('hidden');
+                }
+                hideVirtualCursor();
+            }
+
+            canvasCtx.restore();
+        }
+
+        function drawHandAROverlay(landmarks) {
+            // Connections definition
+            if (window.drawConnectors && window.HAND_CONNECTIONS) {
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#818cf8', strokeWidth: 3 });
+                drawLandmarks(canvasCtx, landmarks, { color: '#fbbf24', lineWidth: 1, radius: 4 });
+            }
+        }
+
+        function updateVirtualCursor(handedness) {
+            const cursor = document.getElementById('virtualCursor');
+            const sideBadge = document.getElementById('handSideBadge');
+            
+            if (!cursor) return;
+            cursor.style.opacity = '1';
+            cursor.style.left = `${gameState.cursorX}px`;
+            cursor.style.top = `${gameState.cursorY}px`;
+
+            if (sideBadge) {
+                sideBadge.innerText = handedness === 'Left' ? '👈 ซ้าย' : '👉 ขวา';
+            }
+        }
+
+        function hideVirtualCursor() {
+            const cursor = document.getElementById('virtualCursor');
+            if (cursor) cursor.style.opacity = '0';
+        }
+
+        function handlePointerMove(e) {
+            if (!gameState.useCamera) {
+                gameState.cursorX = e.clientX;
+                gameState.cursorY = e.clientY;
+                processDwellHover();
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (!gameState.useCamera && e.touches.length > 0) {
+                gameState.cursorX = e.touches[0].clientX;
+                gameState.cursorY = e.touches[0].clientY;
+                processDwellHover();
+            }
+        }
+
+        function handlePointerClick(e) {
+            playSound('click');
+        }
+
+        // Dwell hover trigger logic (Hovering over button for 1s simulates click)
+        function processDwellHover() {
+            const elem = document.elementFromPoint(gameState.cursorX, gameState.cursorY);
+            const clickable = elem ? elem.closest('.ar-btn, button, .interactive-card') : null;
+
+            const ring = document.getElementById('dwellProgress');
+
+            if (clickable) {
+                if (gameState.hoverElement !== clickable) {
+                    // Reset dwell timer for new target
+                    gameState.hoverElement = clickable;
+                    gameState.dwellTimer = performance.now();
+                    clickable.classList.add('hovered');
+                    playSound('click');
+                } else {
+                    const elapsed = performance.now() - gameState.dwellTimer;
+                    const progress = Math.min(100, (elapsed / gameState.dwellRequiredTime) * 100);
+
+                    if (ring) ring.style.strokeDashoffset = `${100 - progress}`;
+
+                    if (elapsed >= gameState.dwellRequiredTime) {
+                        // Trigger Dwell Click!
+                        triggerCursorClick();
+                        gameState.dwellTimer = performance.now() + 1000; // Cooldown
+                    }
+                }
+            } else {
+                if (gameState.hoverElement) {
+                    gameState.hoverElement.classList.remove('hovered');
+                    gameState.hoverElement = null;
+                }
+                if (ring) ring.style.strokeDashoffset = '100';
+            }
+        }
+
+        function triggerCursorClick() {
+            if (gameState.hoverElement) {
+                const target = gameState.hoverElement;
+                target.click();
+                target.classList.add('active');
+                setTimeout(() => target.classList.remove('active'), 200);
+                playSound('click');
+            }
+        }
+
+        // ==========================================
+        // UI SCREEN & FLOW CONTROLLER
+        // ==========================================
+        function startGameAdventure() {
+            initAudio();
+            gameState.score = 0;
+            gameState.currentLevelIndex = 0;
+            gameState.questIndex = 0;
+            gameState.correctCount = 0;
+
+            document.getElementById('screenStart').classList.add('hidden');
+            document.getElementById('screenSummary').classList.add('hidden');
+            document.getElementById('screenGameplay').classList.remove('hidden');
+            document.getElementById('topHud').classList.remove('hidden');
+
+            updateHud();
+            loadCurrentLevel();
+        }
+
+        function returnToMainMenu() {
+            document.getElementById('screenGameplay').classList.add('hidden');
+            document.getElementById('screenSummary').classList.add('hidden');
+            document.getElementById('topHud').classList.add('hidden');
+            document.getElementById('screenStart').classList.remove('hidden');
+        }
+
+        function openHowToPlayModal() {
+            playSound('click');
+            document.getElementById('modalHowToPlay').classList.remove('hidden');
+        }
+
+        function closeHowToPlayModal() {
+            playSound('click');
+            document.getElementById('modalHowToPlay').classList.add('hidden');
+        }
+
+        function updateHud() {
+            document.getElementById('scoreDisplay').innerText = gameState.score;
+            
+            const totalLevels = LEVEL_DATA.length;
+            const levelNum = gameState.currentLevelIndex + 1;
+            const currentLvl = LEVEL_DATA[gameState.currentLevelIndex];
+            
+            document.getElementById('currentLevelTitle').innerText = currentLvl ? currentLvl.title : '';
+
+            // Calculate progress percentage
+            const pct = Math.round((gameState.currentLevelIndex / totalLevels) * 100);
+            document.getElementById('progressPercent').innerText = `${pct}%`;
+            document.getElementById('progressBar').style.width = `${pct}%`;
+        }
+
+        // ==========================================
+        // LEVEL RENDERERS & LOGIC
+        // ==========================================
+        function loadCurrentLevel() {
+            const container = document.getElementById('levelContent');
+            const levelObj = LEVEL_DATA[gameState.currentLevelIndex];
+
+            if (!levelObj) {
+                showFinalSummary();
+                return;
+            }
+
+            updateHud();
+
+            if (levelObj.type === 'reorder') {
+                renderReorderLevel(container, levelObj);
+            } else if (levelObj.type === 'problem_solving') {
+                renderProblemSolvingLevel(container, levelObj);
+            } else if (levelObj.type === 'maze') {
+                renderMazeLevel(container, levelObj);
+            } else if (levelObj.type === 'scenarios') {
+                renderScenariosLevel(container, levelObj);
+            }
+        }
+
+        // --- LEVEL 1: REORDER SEQUENCES ---
+        let currentSequenceOrder = [];
+
+        function renderReorderLevel(container, levelObj) {
+            const quest = levelObj.quests[gameState.questIndex];
+            if (!quest) {
+                advanceToNextLevel();
+                return;
+            }
+
+            // Shuffle cards initially
+            currentSequenceOrder = [...quest.steps].sort(() => Math.random() - 0.5);
+
+            container.innerHTML = `
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-amber-300 uppercase tracking-wider bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30">
+                            ภารกิจที่ ${gameState.questIndex + 1} / ${levelObj.quests.length}
+                        </span>
+                        <span class="text-xs text-indigo-300">เรียงการ์ดจากลำดับแรก -> ลำดับสุดท้าย</span>
+                    </div>
+
+                    <h2 class="text-xl md:text-2xl font-bold text-white mb-2">${quest.topic}</h2>
+                    <p class="text-slate-300 text-xs md:text-sm mb-6">${quest.description}</p>
+
+                    <!-- Sequence Cards List Container -->
+                    <div id="sequenceCardList" class="grid grid-cols-1 gap-3 mb-6">
+                        ${renderCardsHTML(currentSequenceOrder)}
+                    </div>
+                </div>
+
+                <!-- Bottom Action Controls -->
+                <div class="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-700/60">
+                    <button onclick="showHint('${quest.hint.replace(/'/g, "\\'")}')" class="ar-btn px-4 py-2.5 glass-panel hover:bg-slate-800 text-amber-300 text-xs font-semibold rounded-xl border border-amber-500/30 flex items-center gap-1.5">
+                        <span>💡 ขอคำใบ้</span>
+                    </button>
+
+                    <button onclick="checkReorderAnswer()" class="ar-btn px-8 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-white font-bold text-sm rounded-xl shadow-lg border border-emerald-300/30 flex items-center gap-2">
+                        <span>✅ ตรวจสอบลำดับขั้นตอน</span>
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderCardsHTML(stepsArr) {
+            return stepsArr.map((step, idx) => `
+                <div class="interactive-card ar-btn glass-panel p-3.5 rounded-2xl border border-slate-700 flex items-center justify-between gap-3 hover:border-indigo-400 cursor-pointer bg-slate-900/60">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-xl bg-indigo-600/40 text-indigo-200 font-bold flex items-center justify-center text-sm border border-indigo-400/30">
+                            ${idx + 1}
+                        </div>
+                        <span class="text-sm md:text-base text-slate-100 font-medium">${step.text}</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="moveCardUp(${idx})" class="ar-btn p-2 hover:bg-indigo-600/50 rounded-lg text-xs" title="เลื่อนขึ้น">⬆️</button>
+                        <button onclick="moveCardDown(${idx})" class="ar-btn p-2 hover:bg-indigo-600/50 rounded-lg text-xs" title="เลื่อนลง">⬇️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function moveCardUp(idx) {
+            if (idx > 0) {
+                const temp = currentSequenceOrder[idx];
+                currentSequenceOrder[idx] = currentSequenceOrder[idx - 1];
+                currentSequenceOrder[idx - 1] = temp;
+                refreshCardListUI();
+            }
+        }
+
+        function moveCardDown(idx) {
+            if (idx < currentSequenceOrder.length - 1) {
+                const temp = currentSequenceOrder[idx];
+                currentSequenceOrder[idx] = currentSequenceOrder[idx + 1];
+                currentSequenceOrder[idx + 1] = temp;
+                refreshCardListUI();
+            }
+        }
+
+        function refreshCardListUI() {
+            playSound('click');
+            const listContainer = document.getElementById('sequenceCardList');
+            if (listContainer) {
+                listContainer.innerHTML = renderCardsHTML(currentSequenceOrder);
+            }
+        }
+
+        function checkReorderAnswer() {
+            const levelObj = LEVEL_DATA[gameState.currentLevelIndex];
+            const quest = levelObj.quests[gameState.questIndex];
+
+            let isCorrect = true;
+            for (let i = 0; i < currentSequenceOrder.length; i++) {
+                if (currentSequenceOrder[i].correctOrder !== i + 1) {
+                    isCorrect = false;
+                    break;
+                }
+            }
+
+            if (isCorrect) {
+                playSound('correct');
+                gameState.score += 20;
+                gameState.correctCount++;
+                showHint("🎉 ถูกต้องเรียบร้อย! คุณจัดลำดับขั้นตอนอัลกอริทึมได้สมบูรณ์แบบ (+20 คะแนน)", "success");
+                
+                setTimeout(() => {
+                    gameState.questIndex++;
+                    if (gameState.questIndex < levelObj.quests.length) {
+                        loadCurrentLevel();
+                    } else {
+                        advanceToNextLevel();
+                    }
+                }, 1800);
+            } else {
+                playSound('wrong');
+                showHint(`❌ ลำดับขั้นตอนยังไม่ถูกต้อง! ${quest.hint}`);
+            }
+        }
+
+        // --- LEVEL 2: PROBLEM SOLVING MULTIPLE CHOICE ---
+        function renderProblemSolvingLevel(container, levelObj) {
+            const quest = levelObj.quests[gameState.questIndex];
+            if (!quest) {
+                advanceToNextLevel();
+                return;
+            }
+
+            container.innerHTML = `
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-cyan-300 uppercase tracking-wider bg-cyan-500/20 px-3 py-1 rounded-full border border-cyan-500/30">
+                            การวิเคราะห์แก้ปัญหา (${gameState.questIndex + 1}/${levelObj.quests.length})
+                        </span>
+                    </div>
+
+                    <div class="bg-slate-900/80 p-4 rounded-2xl border border-slate-700/80 mb-6">
+                        <p class="text-base md:text-lg text-amber-200 font-semibold leading-relaxed">${quest.scenario}</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-3 mb-6">
+                        ${quest.options.map((opt, idx) => `
+                            <button onclick="selectProblemOption(${idx})" class="ar-btn interactive-card glass-panel p-4 rounded-2xl border border-slate-700 text-left hover:border-indigo-400 flex items-start gap-3 bg-slate-900/50">
+                                <span class="w-7 h-7 rounded-lg bg-indigo-600/40 text-indigo-300 font-bold flex items-center justify-center shrink-0 border border-indigo-400/30">
+                                    ${String.fromCharCode(65 + idx)}
+                                </span>
+                                <span class="text-sm md:text-base text-slate-100 font-medium">${opt.text}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-4 border-t border-slate-700/60">
+                    <button onclick="showHint('${quest.hint.replace(/'/g, "\\'")}')" class="ar-btn px-4 py-2.5 glass-panel hover:bg-slate-800 text-amber-300 text-xs font-semibold rounded-xl border border-amber-500/30 flex items-center gap-1.5">
+                        <span>💡 ขอคำใบ้</span>
+                    </button>
+                </div>
+            `;
+        }
+
+        function selectProblemOption(optIdx) {
+            const levelObj = LEVEL_DATA[gameState.currentLevelIndex];
+            const quest = levelObj.quests[gameState.questIndex];
+            const selected = quest.options[optIdx];
+
+            if (selected.correct) {
+                playSound('correct');
+                gameState.score += 10;
+                gameState.correctCount++;
+                showHint(`✨ ถูกต้อง! ${selected.reason} (+10 คะแนน)`, "success");
+
+                setTimeout(() => {
+                    gameState.questIndex++;
+                    if (gameState.questIndex < levelObj.quests.length) {
+                        loadCurrentLevel();
+                    } else {
+                        advanceToNextLevel();
+                    }
+                }, 2000);
+            } else {
+                playSound('wrong');
+                showHint(`❌ ยังไม่ถูกต้องนะ: ${selected.reason}`);
+            }
+        }
+
+        // --- LEVEL 3: MAZE ALGORITHM PROGRAMMING ---
+        let mazeCommands = [];
+        let mazeMascotPos = { r: 0, c: 0 };
+        let isExecutingMaze = false;
+
+        function renderMazeLevel(container, levelObj) {
+            const quest = levelObj.quests[0];
+            mazeMascotPos = { ...quest.start };
+            mazeCommands = [];
+
+            container.innerHTML = `
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-purple-300 uppercase tracking-wider bg-purple-500/20 px-3 py-1 rounded-full border border-purple-500/30">
+                            เขาวงกตอัลกอริทึม
+                        </span>
+                        <span class="text-xs text-indigo-300">เขียนชุดคำสั่งให้น้องหุ่นยนต์เดินไปถึงดาว ⭐️</span>
+                    </div>
+
+                    <p class="text-xs md:text-sm text-slate-300 mb-4">${quest.instruction}</p>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center mb-4">
+                        <!-- Grid Board -->
+                        <div class="mx-auto bg-slate-900 p-3 rounded-2xl border border-indigo-500/40 shadow-inner">
+                            <div id="mazeGrid" class="grid grid-cols-5 gap-1.5 w-64 h-64 md:w-72 md:h-72">
+                                ${renderMazeGridHTML(quest)}
+                            </div>
+                        </div>
+
+                        <!-- Command Building Area -->
+                        <div class="flex flex-col justify-between h-full bg-slate-900/60 p-4 rounded-2xl border border-slate-700">
+                            <div>
+                                <h3 class="text-xs font-bold text-amber-300 mb-2 uppercase tracking-wider">
+                                    ชุดคำสั่งอัลกอริทึมของคุณ:
+                                </h3>
+                                <div id="commandQueue" class="min-h-[70px] bg-slate-950 p-2 rounded-xl border border-slate-800 flex flex-wrap gap-1.5 items-center">
+                                    <span class="text-xs text-slate-500 italic">เลือกปุ่มลูกศรด้านล่างเพื่อเพิ่มคำสั่ง...</span>
+                                </div>
+                            </div>
+
+                            <!-- Arrow Palette Buttons -->
+                            <div class="mt-4">
+                                <div class="text-[10px] text-slate-400 mb-1 font-semibold">เครื่องมือสั่งการ:</div>
+                                <div class="grid grid-cols-4 gap-2 mb-2">
+                                    <button onclick="addMazeCmd('UP')" class="ar-btn glass-panel p-2.5 rounded-xl hover:bg-indigo-600/50 text-center text-lg font-bold">⬆️</button>
+                                    <button onclick="addMazeCmd('DOWN')" class="ar-btn glass-panel p-2.5 rounded-xl hover:bg-indigo-600/50 text-center text-lg font-bold">⬇️</button>
+                                    <button onclick="addMazeCmd('LEFT')" class="ar-btn glass-panel p-2.5 rounded-xl hover:bg-indigo-600/50 text-center text-lg font-bold">⬅️</button>
+                                    <button onclick="addMazeCmd('RIGHT')" class="ar-btn glass-panel p-2.5 rounded-xl hover:bg-indigo-600/50 text-center text-lg font-bold">➡</button>
+                                </div>
+                                <button onclick="clearMazeCmds()" class="ar-btn w-full py-1.5 glass-panel hover:bg-rose-900/40 text-rose-300 text-xs font-semibold rounded-lg border border-rose-500/30">
+                                    🗑️ ล้างชุดคำสั่งทั้งหมด
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-4 border-t border-slate-700/60">
+                    <button onclick="showHint('วางแผนเส้นทางล่วงหน้า หลบสิ่งกีดขวางแล้วเดินเข้าหาดาว')" class="ar-btn px-4 py-2.5 glass-panel hover:bg-slate-800 text-amber-300 text-xs font-semibold rounded-xl border border-amber-500/30 flex items-center gap-1.5">
+                        <span>💡 ขอคำใบ้</span>
+                    </button>
+
+                    <button onclick="runMazeAlgorithm()" class="ar-btn px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white font-bold text-sm rounded-xl shadow-lg border border-purple-300/30 flex items-center gap-2">
+                        <span>▶️ ประมวลผลอัลกอริทึม</span>
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderMazeGridHTML(quest) {
+            let html = '';
+            for (let r = 0; r < 5; r++) {
+                for (let c = 0; c < 5; c++) {
+                    const isMascot = (r === mazeMascotPos.r && c === mazeMascotPos.c);
+                    const isGoal = (r === quest.goal.r && c === quest.goal.c);
+                    const isObstacle = quest.obstacles.some(o => o.r === r && o.c === c);
+
+                    let cellContent = '';
+                    if (isMascot) cellContent = '🤖';
+                    else if (isGoal) cellContent = '⭐️';
+                    else if (isObstacle) cellContent = '🪨';
+
+                    html += `
+                        <div id="cell-${r}-${c}" class="maze-cell bg-slate-800/80 rounded-xl flex items-center justify-center text-xl md:text-2xl border border-slate-700/50">
+                            ${cellContent}
+                        </div>
+                    `;
+                }
+            }
+            return html;
+        }
+
+        function addMazeCmd(dir) {
+            if (isExecutingMaze) return;
+            if (mazeCommands.length >= 12) {
+                showHint("ชุดคำสั่งเต็มแล้ว! (สูงสุด 12 ขั้นตอน)");
+                return;
+            }
+            playSound('click');
+            mazeCommands.push(dir);
+            updateMazeQueueUI();
+        }
+
+        function clearMazeCmds() {
+            if (isExecutingMaze) return;
+            playSound('click');
+            mazeCommands = [];
+            updateMazeQueueUI();
+        }
+
+        function updateMazeQueueUI() {
+            const queue = document.getElementById('commandQueue');
+            if (!queue) return;
+
+            if (mazeCommands.length === 0) {
+                queue.innerHTML = `<span class="text-xs text-slate-500 italic">เลือกปุ่มลูกศรด้านล่างเพื่อเพิ่มคำสั่ง...</span>`;
+                return;
+            }
+
+            const symbolMap = { 'UP': '⬆️', 'DOWN': '⬇️', 'LEFT': '⬅️', 'RIGHT': '➡' };
+            queue.innerHTML = mazeCommands.map((cmd, idx) => `
+                <span class="bg-indigo-600/60 text-white text-xs font-bold px-2 py-1 rounded-md border border-indigo-400/30 flex items-center gap-1">
+                    ${idx + 1}.${symbolMap[cmd]}
+                </span>
+            `).join('');
+        }
+
+        function runMazeAlgorithm() {
+            if (isExecutingMaze) return;
+            if (mazeCommands.length === 0) {
+                showHint("กรุณาเลือกใส่ชุดคำสั่งลูกศรก่อนกดประมวลผลครับ");
+                return;
+            }
+
+            const quest = LEVEL_DATA[gameState.currentLevelIndex].quests[0];
+            isExecutingMaze = true;
+            mazeMascotPos = { ...quest.start };
+
+            let stepIdx = 0;
+
+            const interval = setInterval(() => {
+                if (stepIdx >= mazeCommands.length) {
+                    clearInterval(interval);
+                    isExecutingMaze = false;
+                    
+                    // Check if Goal reached
+                    if (mazeMascotPos.r === quest.goal.r && mazeMascotPos.c === quest.goal.c) {
+                        playSound('correct');
+                        gameState.score += 30;
+                        gameState.correctCount++;
+                        showHint("🎉 เก่งมาก! น้องหุ่นยนต์เดินตามอัลกอริทึมถึงดาวสำเร็จ! (+30 คะแนน)", "success");
+                        setTimeout(() => advanceToNextLevel(), 2000);
+                    } else {
+                        playSound('wrong');
+                        showHint("❌ หุ่นยนต์ยังไปไม่ถึงดาว ลองปรับเปลี่ยนลำดับคำสั่งใหม่ดูนะครับ");
+                    }
+                    return;
+                }
+
+                const cmd = mazeCommands[stepIdx];
+                let newR = mazeMascotPos.r;
+                let newC = mazeMascotPos.c;
+
+                if (cmd === 'UP') newR--;
+                if (cmd === 'DOWN') newR++;
+                if (cmd === 'LEFT') newC--;
+                if (cmd === 'RIGHT') newC++;
+
+                // Check bounds & obstacles
+                if (newR >= 0 && newR < 5 && newC >= 0 && newC < 5) {
+                    const hitObstacle = quest.obstacles.some(o => o.r === newR && o.c === newC);
+                    if (!hitObstacle) {
+                        mazeMascotPos = { r: newR, c: newC };
+                        playSound('click');
+                    } else {
+                        playSound('wrong');
+                        showHint("💥 อ๊ะ! หุ่นยนต์ชนหินกีดขวาง!");
+                    }
+                } else {
+                    playSound('wrong');
+                    showHint("⚠️ หุ่นยนต์เดินตกขอบสนาม!");
+                }
+
+                // Refresh Grid UI
+                const gridElem = document.getElementById('mazeGrid');
+                if (gridElem) gridElem.innerHTML = renderMazeGridHTML(quest);
+
+                stepIdx++;
+            }, 600);
+        }
+
+        // --- LEVEL 4: SCENARIOS ---
+        function renderScenariosLevel(container, levelObj) {
+            const quest = levelObj.quests[gameState.questIndex];
+            if (!quest) {
+                advanceToNextLevel();
+                return;
+            }
+
+            if (quest.steps) {
+                renderReorderLevel(container, levelObj);
+            } else if (quest.options) {
+                renderProblemSolvingLevel(container, levelObj);
+            }
+        }
+
+        // ==========================================
+        // LEVEL ADVANCEMENT & FINAL SUMMARY
+        // ==========================================
+        function advanceToNextLevel() {
+            playSound('levelComplete');
+            gameState.score += 50; // Pass level bonus!
+            gameState.currentLevelIndex++;
+            gameState.questIndex = 0;
+
+            if (gameState.currentLevelIndex < LEVEL_DATA.length) {
+                showHint(`🎊 ผ่านด่านแล้ว! รับโบนัส +50 คะแนน`, "success");
+                setTimeout(() => loadCurrentLevel(), 1800);
+            } else {
+                showFinalSummary();
+            }
+        }
+
+        function showFinalSummary() {
+            playSound('levelComplete');
+            document.getElementById('screenGameplay').classList.add('hidden');
+            document.getElementById('screenSummary').classList.remove('hidden');
+
+            document.getElementById('finalScore').innerText = gameState.score;
+            document.getElementById('finalCorrect').innerText = `${gameState.correctCount} ข้อ`;
+
+            // Evaluate Grade 5 Competency Rank
+            const titleElem = document.getElementById('badgeTitle');
+            const descElem = document.getElementById('badgeDesc');
+
+            if (gameState.score >= 120) {
+                titleElem.innerText = "🏅 ปรมาจารย์อัลกอริทึมระดับทอง (ระดับดีเยี่ยม)";
+                descElem.innerText = "นักเรียนมีความเชี่ยวชาญการวิเคราะห์ปัญหา เรียงลำดับขั้นตอนอัลกอริทึมในชีวิตประจำวันได้อย่างดีเยี่ยม!";
+            } else if (gameState.score >= 80) {
+                titleElem.innerText = "🥈 นักผจญภัยแก้ปัญหาระดับเงิน (ระดับดี)";
+                descElem.innerText = "นักเรียนมีความรู้ความเข้าใจในกระบวนการแก้ปัญหาอย่างเป็นระบบ สามารถวางลำดับอัลกอริทึมได้ถูกต้อง!";
+            } else {
+                titleElem.innerText = "🥉 นักคิดอัลกอริทึมฝึกหัด (ระดับผ่านเกณฑ์)";
+                descElem.innerText = "นักเรียนเข้าใจความหมายของอัลกอริทึม หมั่นฝึกฝนการเรียงลำดับขั้นตอนอีกนิด จะเก่งยิ่งขึ้นครับ!";
+            }
+        }
+
+        // ==========================================
+        // HINT & FEEDBACK BANNER HELPER
+        // ==========================================
+        let hintTimeout = null;
+
+        function showHint(text, type = "info") {
+            const modal = document.getElementById('hintModal');
+            const card = document.getElementById('hintCard');
+            const title = document.getElementById('hintTitle');
+            const textElem = document.getElementById('hintText');
+            const icon = document.getElementById('hintIcon');
+
+            if (!modal || !textElem) return;
+
+            if (type === "success") {
+                card.className = "glass-panel bg-emerald-950/90 p-4 rounded-2xl border border-emerald-500/50 shadow-2xl flex items-start gap-3";
+                title.innerText = "ข้อความสำเร็จ!";
+                title.className = "font-bold text-sm text-emerald-300 mb-0.5";
+                icon.innerText = "🎉";
+            } else {
+                card.className = "glass-panel bg-slate-900/95 p-4 rounded-2xl border border-amber-500/50 shadow-2xl flex items-start gap-3";
+                title.innerText = "คำใบ้อัลกอริทึม";
+                title.className = "font-bold text-sm text-amber-300 mb-0.5";
+                icon.innerText = "💡";
+            }
+
+            textElem.innerText = text;
+
+            modal.classList.remove('translate-y-32', 'opacity-0', 'pointer-events-none');
+
+            if (hintTimeout) clearTimeout(hintTimeout);
+            hintTimeout = setTimeout(() => {
+                modal.classList.add('translate-y-32', 'opacity-0', 'pointer-events-none');
+            }, 3500);
+        }
+    </script>
+</body>
+</html>
